@@ -2,7 +2,22 @@ import lmdb
 import os
 import shutil
 import multiprocessing
-from bitcoin import privtopub, pubtoaddr
+import requests
+import time
+
+# Function to get key range assignment from the supervisor
+def get_range_assignment():
+    while True:
+        try:
+            response = requests.get(SUPERVISOR_ENDPOINT)
+            if response.status_code == 200:
+                range_data = response.json()
+                return range_data['start_range'], range_data['end_range']
+            else:
+                print(f"Error: Failed to fetch range assignment, retrying in 10 seconds")
+        except Exception as e:
+            print(f"Error: {e}, retrying in 10 seconds")
+        time.sleep(10)
 
 # Function to generate keys and addresses for a specific range
 def generate_key_range(start_range, end_range, db_path, local_save_path, size_threshold_mb):
@@ -69,9 +84,9 @@ def multiprocess_generate_keys(start_range, end_range, num_processes, db_path, l
         process.join()
 
 if __name__ == "__main__":
-    # Example arguments for the worker node
-    start_range = 0x2000000000000000
-    end_range = 0x209b800000000000
+    # Get range assignment from the supervisor
+    start_range, end_range = get_range_assignment()
+
     db_path = "/path/to/lmdb/database"
     local_save_path = "/local/directory"
 
