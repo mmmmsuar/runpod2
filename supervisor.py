@@ -1,158 +1,194 @@
+# supervisor.py
+
 import requests
 import time
-import json
+import os
+import logging
+from dotenv import load_dotenv
 
-DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/your_webhook_url' ##UPDATE THIS
-RUN_ENDPOINT = 'https://api.runpod.ai/v2/xlo2a7bqkp1fqk/run'
-STATUS_ENDPOINT = 'https://api.runpod.ai/v2/xlo2a7bqkp1fqk/status/'
-CANCEL_ENDPOINT = 'https://api.runpod.ai/v2/xlo2a7bqkp1fqk/cancel/'
-HEALTH_ENDPOINT = 'https://api.runpod.ai/v2/xlo2a7bqkp1fqk/health'
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Constants
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+RUN_ENDPOINT = os.getenv('RUN_ENDPOINT')
+STATUS_ENDPOINT = os.getenv('STATUS_ENDPOINT')
+CANCEL_ENDPOINT = os.getenv('CANCEL_ENDPOINT')
+HEALTH_ENDPOINT = os.getenv('HEALTH_ENDPOINT')
+RUNPOD_API_KEY = os.getenv('RUNPOD_API_KEY')
 
 # Function to send a Discord alert
 def send_discord_alert(message):
     data = {
         "content": message,
-        "username": "Gigi"
+        "username": "BTC Puzzle Supervisor"
     }
     requests.post(DISCORD_WEBHOOK_URL, json=data)
 
-# Function to distribute work manually with predefined key ranges
-def distribute_work_manual(start_range, end_range):
-    task_payload = {
-        'start': start_range,
-        'end': end_range
+# Function to assign key ranges to workers
+def assign_key_range(worker_id):
+    # Assign ranges based on worker_id. Adjust the ranges as necessary.
+    if worker_id == "6trkpi9vzk6sg0":  # Worker 1
+        return 0x2000000000000000, 0x209b800000000000
+    elif worker_id == "v4u5uew9hcix6u":  # Worker 2
+        return 0x209b800000000001, 0x2137000000000000
+    elif worker_id == "hy8y0x8ic1j0z":  # Worker 3
+        return 0x2137000000000001, 0x21d2000000000000
+    elif worker_id == "rbusy21pgltamx":  # Worker 4
+        return 0x21d2000000000001, 0x2236e00000000000
+    elif worker_id == "7kx98cbk895yar":  # Worker 5
+        return 0x2236e00000000001, 0x22d1c80000000000
+    elif worker_id == "n1eoc1tzc1cd1u":  # Worker 6
+        return 0x22d1c80000000001, 0x236cb00000000000
+    # Add more workers as needed
+
+# Function to distribute subranges dynamically to workers
+def distribute_work(worker_id):
+    key_range = assign_key_range(worker_id)
+    
+    # Prepare input for RunPod workers
+    input_data = {
+        "input": {
+            "start_range": hex(key_range[0]),
+            "end_range": hex(key_range[1]),
+            "db_path": "/tmp/lmdb_database",  # Path used by worker to store data
+            "local_save_path": "/tmp/local_save",  # Local save path for each worker
+            "script_url": "https://github.com/yourusername/yourrepo/worker.py"
+        }
     }
+    
+    # Call the RunPod serverless function
+    response = requests.post(
+        RUN_ENDPOINT,
+        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+        json=input_data
+    )
+    
+    if response.status_code == 200:
+        job_id = response.json().get('id')
+        logger.info(f"Worker {worker_id} started with job ID: {job_id}")
+        send_discord_alert(f"Worker {worker_id} started processing range {hex(key_range[0])} to {hex(key_range[1])}")
+        return job_id
+    else:
+        logger.error(f"Failed to start worker {worker_id}. Status code: {response.status_code}")
+        send_discord_alert(f"Failed to start worker {worker_id} for range {hex(key_range[0])} to {hex(key_range[1])}")
+        return None
 
+# Function to check the health of a worker
+def check_worker_health(worker_id, job_id):
+    """
+    Check the health of a worker by calling the health endpoint.
+    """
     try:
-        response = requests.post(RUN_ENDPOINT, json=task_payload)
+        response = requests.get(
+            f"{HEALTH_ENDPOINT}/{job_id}",
+            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"}
+        )
         if response.status_code == 200:
-            task_id = response.json().get('id')
-            send_discord_alert(f"Task {task_id} started for range {start_range} to {end_range}")
+            health_data = response.json()
+            if health_data.get('status') == 'healthy':
+                logger.info(f"Worker {worker_id} is healthy.")
+                send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) is healthy.")
+            else:
+                logger.warning(f"Worker {worker_id} is not healthy.")
+                send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) is not healthy.")
         else:
-            send_discord_alert(f"Error: Failed to start task for range {start_range} to {end_range}")
+            logger.error(f"Failed to check health for worker {worker_id} (Job ID: {job_id}).")
+            send_discord_alert(f"Failed to check health for worker {worker_id} (Job ID: {job_id}). Status code: {response.status_code}")
     except Exception as e:
-        send_discord_alert(f"Error: {e}")
+        logger.error(f"Error checking health for worker {worker_id} (Job ID: {job_id}): {str(e)}")
+        send_discord_alert(f"Error checking health for worker {worker_id} (Job ID: {job_id}): {str(e)}")
 
+# Function to cancel a worker's job if needed
+def cancel_worker_job(worker_id, job_id):
+    """
+    Cancel a worker's job by calling the cancel endpoint.
+    """
+    try:
+        response = requests.post(
+            f"{CANCEL_ENDPOINT}/{job_id}",
+            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"}
+        )
+        if response.status_code == 200:
+            logger.info(f"Successfully canceled job for worker {worker_id}.")
+            send_discord_alert(f"Successfully canceled job for worker {worker_id} (Job ID: {job_id}).")
+        else:
+            logger.error(f"Failed to cancel job for worker {worker_id}. Status code: {response.status_code}")
+            send_discord_alert(f"Failed to cancel job for worker {worker_id} (Job ID: {job_id}). Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error canceling job for worker {worker_id} (Job ID: {job_id}): {str(e)}")
+        send_discord_alert(f"Error canceling job for worker {worker_id} (Job ID: {job_id}): {str(e)}")
+
+# Function to monitor the worker progress
+def check_worker_progress(job_ids):
+    """
+    Check the progress of each assigned subrange by calling the serverless endpoint.
+    
+    Args:
+        job_ids (Dict[str, str]): A dictionary mapping worker IDs to their corresponding job IDs.
+    """
+    for worker_id, job_id in job_ids.items():
+        try:
+            response = requests.get(
+                f"{STATUS_ENDPOINT}/{job_id}",
+                headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"}
+            )
+            
+            if response.status_code == 200:
+                status_data = response.json()
+                status = status_data.get('status')
+                
+                if status == 'COMPLETED':
+                    send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) has completed processing.")
+                elif status == 'IN_PROGRESS':
+                    progress = status_data.get('progress', {})
+                    current_position = int(progress.get('current_position', '0'), 16)
+                    keys_generated = progress.get('keys_generated', 0)
+                    addresses_generated = progress.get('addresses_generated', 0)
+                    
+                    # Calculate overall progress
+                    overall_progress = (keys_generated + addresses_generated) / 2
+                    
+                    send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) progress:\n"
+                                       f"Current Position: {hex(current_position)}\n"
+                                       f"Keys Generated: {keys_generated}\n"
+                                       f"Addresses Generated: {addresses_generated}\n"
+                                       f"Overall Progress: {overall_progress:.2f}%")
+                else:
+                    send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) status: {status}")
+            else:
+                send_discord_alert(f"Failed to get status for worker {worker_id} (Job ID: {job_id}). Status code: {response.status_code}")
+        except Exception as e:
+            send_discord_alert(f"Error checking progress for worker {worker_id} (Job ID: {job_id}): {str(e)}")
+
+# You can then call these functions in your main loop
 if __name__ == "__main__":
+    # Define job_ids dictionary
+    worker_ids = [
+        "6trkpi9vzk6sg0", "v4u5uew9hcix6u", "hy8y0x8ic1j0z",
+        "rbusy21pgltamx", "7kx98cbk895yar", "n1eoc1tzc1cd1u"
+    ]
+    job_ids = {}
+    
+    # Distribute work and populate job_ids
+    for worker_id in worker_ids:
+        job_id = distribute_work(worker_id)
+        job_ids[worker_id] = job_id
 
-     # Step 1: Uncomment the range that needs to be processed and distributed to the workers.
+    # Continuously monitor worker progress
+    while True:
+        try:
+            check_worker_progress(job_ids)
 
-    # Segment 1, Sub-range 1
-    distribute_work_manual(0x2000000000000000, 0x209b800000000000)
+            # Check health of all workers periodically
+            for worker_id, job_id in job_ids.items():
+                check_worker_health(worker_id, job_id)
 
-    # Segment 1, Sub-range 2
-    distribute_work_manual(0x209b800000000001, 0x2137000000000000)
-
-    # Segment 1, Sub-range 3
-    distribute_work_manual(0x2137000000000001, 0x21d2000000000000)
-
-    # Segment 1, Sub-range 4
-    distribute_work_manual(0x21d2000000000001, 0x2236e00000000000)
-
-    # Segment 2, Sub-range 1
-    distribute_work_manual(0x2236e00000000001, 0x22d1c80000000000)
-
-    # Segment 2, Sub-range 2
-    distribute_work_manual(0x22d1c80000000001, 0x236cb00000000000)
-
-    # Segment 2, Sub-range 3
-    distribute_work_manual(0x236cb00000000001, 0x2407900000000000)
-
-    # Segment 2, Sub-range 4
-    distribute_work_manual(0x2407900000000001, 0x246dc00000000000)
-
-    # Segment 3, Sub-range 1
-    distribute_work_manual(0x246dc00000000001, 0x2502a80000000000)
-
-    # Segment 3, Sub-range 2
-    distribute_work_manual(0x2502a80000000001, 0x259d900000000000)
-
-    # Segment 3, Sub-range 3
-    distribute_work_manual(0x259d900000000001, 0x2638700000000000)
-
-    # Segment 3, Sub-range 4
-    distribute_work_manual(0x2638700000000001, 0x26a4a00000000000)
-
-    # Segment 4, Sub-range 1
-    distribute_work_manual(0x26a4a00000000001, 0x273f880000000000)
-
-    # Segment 4, Sub-range 2
-    distribute_work_manual(0x273f880000000001, 0x27da700000000000)
-
-    # Segment 4, Sub-range 3
-    distribute_work_manual(0x27da700000000001, 0x2875500000000000)
-
-    # Segment 4, Sub-range 4
-    distribute_work_manual(0x2875500000000001, 0x28db800000000000)
-
-    # Segment 5, Sub-range 1
-    distribute_work_manual(0x28db800000000001, 0x2976600000000000)
-
-    # Segment 5, Sub-range 2
-    distribute_work_manual(0x2976600000000001, 0x2a11400000000000)
-
-    # Segment 5, Sub-range 3
-    # distribute_work_manual(0x2a11400000000001, 0x2aac200000000000)
-
-    # Segment 5, Sub-range 4
-    # distribute_work_manual(0x2aac200000000001, 0x2b12600000000000)
-
-    # Segment 6, Sub-range 1
-    # distribute_work_manual(0x2b12600000000001, 0x2bac480000000000)
-
-    # Segment 6, Sub-range 2
-    # distribute_work_manual(0x2bac480000000001, 0x2c47300000000000)
-
-    # Segment 6, Sub-range 3
-    # distribute_work_manual(0x2c47300000000001, 0x2ce2100000000000)
-
-    # Segment 6, Sub-range 4
-    # distribute_work_manual(0x2ce2100000000001, 0x2d49400000000000)
-
-    # Segment 7, Sub-range 1
-    # distribute_work_manual(0x2d49400000000001, 0x2de4200000000000)
-
-    # Segment 7, Sub-range 2
-    # distribute_work_manual(0x2de4200000000001, 0x2e7f000000000000)
-
-    # Segment 7, Sub-range 3
-    # distribute_work_manual(0x2e7f000000000001, 0x2f19e00000000000)
-
-    # Segment 7, Sub-range 4
-    # distribute_work_manual(0x2f19e00000000001, 0x2f80200000000000)
-
-    # Segment 8, Sub-range 1
-    # distribute_work_manual(0x2f80200000000001, 0x301b000000000000)
-
-    # Segment 8, Sub-range 2
-    # distribute_work_manual(0x301b000000000001, 0x30b5e00000000000)
-
-    # Segment 8, Sub-range 3
-    # distribute_work_manual(0x30b5e00000000001, 0x3150c00000000000)
-
-    # Segment 8, Sub-range 4
-    # distribute_work_manual(0x3150c00000000001, 0x31b7000000000000)
-
-    # Segment 9, Sub-range 1
-    # distribute_work_manual(0x31b7000000000001, 0x3251e00000000000)
-
-    # Segment 9, Sub-range 2
-    # distribute_work_manual(0x3251e00000000001, 0x32ecc00000000000)
-
-    # Segment 9, Sub-range 3
-    # distribute_work_manual(0x32ecc00000000001, 0x3386a00000000000)
-
-    # Segment 9, Sub-range 4
-    # distribute_work_manual(0x3386a00000000001, 0x33edffffffffff00)
-
-     # Segment 10, Sub-range 1
-    # distribute_work_manual(0x33edffffffffff01, 0x3487e80000000000)
-
-    # Segment 10, Sub-range 2
-    # distribute_work_manual(0x3487e80000000001, 0x3521d00000000000)
-
-    # Segment 10, Sub-range 3
-    # distribute_work_manual(0x3521d00000000001, 0x35bcb80000000000)
-
-    # Segment 10, Sub-range 4
-    # distribute_work_manual(0x35bcb80000000001, 0x3ffffffffffffffff)
+            time.sleep(300)  # Check every 5 minutes
+        except Exception as e:
+            send_discord_alert(f"Error in monitoring loop: {str(e)}")
+            time.sleep(60)  # Wait a minute before retrying if there's an error
