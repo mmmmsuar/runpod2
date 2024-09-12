@@ -29,27 +29,35 @@ def send_discord_alert(message):
     }
     requests.post(DISCORD_WEBHOOK_URL, json=data)
 
-# Function to assign key ranges to workers
-def assign_key_range(worker_id):
-    # Assign ranges based on worker_id. Adjust the ranges as necessary.
-    if worker_id == "v4u5uew9hcix6u":  # Worker 1
-        return 0x2000000000000000, 0x209b800000000000
-    elif worker_id == "hy8y0x8icq1jo2":  # Worker 2
-        return 0x209b800000000001, 0x2137000000000000
-    elif worker_id == "rbusy21pgltamx":  # Worker 3
-        return 0x2137000000000001, 0x21d2000000000000
-    elif worker_id == "7kx98cbk895yar":  # Worker 4
-        return 0x21d2000000000001, 0x2236e00000000000
-    elif worker_id == "n1eoc1tzc1cd1u":  # Worker 5
-        return 0x2236e00000000001, 0x22d1c80000000000
-    elif worker_id == "zrowu8zyj9nyp3":  # Worker 6
-        return 0x22d1c80000000001, 0x236cb00000000000
-    # Add more workers as needed
+# Function to assign key ranges dynamically based on the worker index
+def assign_key_range(worker_index, total_workers):
+    # Full key range: 20000000000000000 to 3ffffffffffffffff
+    try:
+        full_range_start = 0x20000000000000000
+        full_range_end = 0x3ffffffffffffffff
+        
+        total_range_size = full_range_end - full_range_start
+        range_size_per_worker = total_range_size // total_workers
+        
+        worker_start = full_range_start + (worker_index * range_size_per_worker)
+        worker_end = worker_start + range_size_per_worker - 1 if worker_index < total_workers - 1 else full_range_end
+        
+        logger.info(f"Worker {worker_index} assigned range {hex(worker_start)} to {hex(worker_end)}")
+        return worker_start, worker_end
+    except Exception as e:
+        logger.error(f"Error in assign_key_range for worker {worker_index}: {str(e)}")
+        send_discord_alert(f"Error in assign_key_range for worker {worker_index}: {str(e)}")
+        return None
 
 # Function to distribute subranges dynamically to workers
-def distribute_work(worker_id):
-    key_range = assign_key_range(worker_id)
+def distribute_work(worker_id, worker_index, total_workers):
+    key_range = assign_key_range(worker_index, total_workers)
     
+    if key_range is None:
+        logger.error(f"Key range for worker {worker_id} (worker index {worker_index}) is None.")
+        send_discord_alert(f"Failed to assign a key range for worker {worker_id}.")
+        return None
+
     # Prepare input for RunPod workers
     input_data = {
         "input": {
@@ -62,124 +70,45 @@ def distribute_work(worker_id):
     }
     
     # Call the RunPod serverless function
-    response = requests.post(
-        RUN_ENDPOINT,
-        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
-        json=input_data
-    )
-    
-    if response.status_code == 200:
-        job_id = response.json().get('id')
-        logger.info(f"Worker {worker_id} started with job ID: {job_id}")
-        send_discord_alert(f"Worker {worker_id} started processing range {hex(key_range[0])} to {hex(key_range[1])}")
-        return job_id
-    else:
-        logger.error(f"Failed to start worker {worker_id}. Status code: {response.status_code}")
-        send_discord_alert(f"Failed to start worker {worker_id} for range {hex(key_range[0])} to {hex(key_range[1])}")
-        return None
-
-# Function to check the health of a worker
-def check_worker_health(worker_id, job_id):
-    """
-    Check the health of a worker by calling the health endpoint.
-    """
-    try:
-        response = requests.get(
-            f"{HEALTH_ENDPOINT}/{job_id}",
-            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"}
-        )
-        if response.status_code == 200:
-            health_data = response.json()
-            if health_data.get('status') == 'healthy':
-                logger.info(f"Worker {worker_id} is healthy.")
-                send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) is healthy.")
-            else:
-                logger.warning(f"Worker {worker_id} is not healthy.")
-                send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) is not healthy.")
-        else:
-            logger.error(f"Failed to check health for worker {worker_id} (Job ID: {job_id}).")
-            send_discord_alert(f"Failed to check health for worker {worker_id} (Job ID: {job_id}). Status code: {response.status_code}")
-    except Exception as e:
-        logger.error(f"Error checking health for worker {worker_id} (Job ID: {job_id}): {str(e)}")
-        send_discord_alert(f"Error checking health for worker {worker_id} (Job ID: {job_id}): {str(e)}")
-
-# Function to cancel a worker's job if needed
-def cancel_worker_job(worker_id, job_id):
-    """
-    Cancel a worker's job by calling the cancel endpoint.
-    """
     try:
         response = requests.post(
-            f"{CANCEL_ENDPOINT}/{job_id}",
-            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"}
+            RUN_ENDPOINT,
+            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+            json=input_data
         )
+        
         if response.status_code == 200:
-            logger.info(f"Successfully canceled job for worker {worker_id}.")
-            send_discord_alert(f"Successfully canceled job for worker {worker_id} (Job ID: {job_id}).")
+            job_id = response.json().get('id')
+            logger.info(f"Worker {worker_id} started with job ID: {job_id}")
+            send_discord_alert(f"Worker {worker_id} started processing range {hex(key_range[0])} to {hex(key_range[1])}")
+            return job_id
         else:
-            logger.error(f"Failed to cancel job for worker {worker_id}. Status code: {response.status_code}")
-            send_discord_alert(f"Failed to cancel job for worker {worker_id} (Job ID: {job_id}). Status code: {response.status_code}")
+            logger.error(f"Failed to start worker {worker_id}. Status code: {response.status_code}")
+            send_discord_alert(f"Failed to start worker {worker_id} for range {hex(key_range[0])} to {hex(key_range[1])}")
+            return None
     except Exception as e:
-        logger.error(f"Error canceling job for worker {worker_id} (Job ID: {job_id}): {str(e)}")
-        send_discord_alert(f"Error canceling job for worker {worker_id} (Job ID: {job_id}): {str(e)}")
-
-# Function to monitor the worker progress
-def check_worker_progress(job_ids):
-    """
-    Check the progress of each assigned subrange by calling the serverless endpoint.
-    
-    Args:
-        job_ids (Dict[str, str]): A dictionary mapping worker IDs to their corresponding job IDs.
-    """
-    for worker_id, job_id in job_ids.items():
-        try:
-            response = requests.get(
-                f"{STATUS_ENDPOINT}/{job_id}",
-                headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"}
-            )
-            
-            if response.status_code == 200:
-                status_data = response.json()
-                status = status_data.get('status')
-                
-                if status == 'COMPLETED':
-                    send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) has completed processing.")
-                elif status == 'IN_PROGRESS':
-                    progress = status_data.get('progress', {})
-                    current_position = int(progress.get('current_position', '0'), 16)
-                    keys_generated = progress.get('keys_generated', 0)
-                    addresses_generated = progress.get('addresses_generated', 0)
-                    
-                    # Calculate overall progress
-                    overall_progress = (keys_generated + addresses_generated) / 2
-                    
-                    send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) progress:\n"
-                                       f"Current Position: {hex(current_position)}\n"
-                                       f"Keys Generated: {keys_generated}\n"
-                                       f"Addresses Generated: {addresses_generated}\n"
-                                       f"Overall Progress: {overall_progress:.2f}%")
-                else:
-                    send_discord_alert(f"Worker {worker_id} (Job ID: {job_id}) status: {status}")
-            else:
-                send_discord_alert(f"Failed to get status for worker {worker_id} (Job ID: {job_id}). Status code: {response.status_code}")
-        except Exception as e:
-            send_discord_alert(f"Error checking progress for worker {worker_id} (Job ID: {job_id}): {str(e)}")
+        logger.error(f"Error in distributing work for worker {worker_id}: {str(e)}")
+        send_discord_alert(f"Error in distributing work for worker {worker_id}: {str(e)}")
+        return None
 
 # You can then call these functions in your main loop
 if __name__ == "__main__":
-    # Define job_ids dictionary
+    # Manually define worker IDs
     worker_ids = [
-        "6trkpi9vzk6sg0", "v4u5uew9hcix6u", "hy8y0x8ic1j0z",
-        "rbusy21pgltamx", "7kx98cbk895yar", "n1eoc1tzc1cd1u"
+        "v4u5uew9hcix6u", "hy8y0x8ic1j0z", "rbusy21pgltamx", 
+        "7kx98cbk895yar", "n1eoc1tzc1cd1u", "zrowu8zyj9nyp3"
     ]
-    job_ids = {}
     
-    # Distribute work and populate job_ids
-    for worker_id in worker_ids:
-        job_id = distribute_work(worker_id)
-        job_ids[worker_id] = job_id
+    job_ids = {}
+    total_workers = len(worker_ids)
 
-    # Continuously monitor worker progress
+    # Distribute work and populate job_ids
+    for worker_index, worker_id in enumerate(worker_ids):
+        job_id = distribute_work(worker_id, worker_index, total_workers)
+        if job_id is not None:
+            job_ids[worker_id] = job_id
+
+    # Continuously monitor worker progress and health
     while True:
         try:
             check_worker_progress(job_ids)
@@ -191,4 +120,4 @@ if __name__ == "__main__":
             time.sleep(300)  # Check every 5 minutes
         except Exception as e:
             send_discord_alert(f"Error in monitoring loop: {str(e)}")
-            time.sleep(60)  # Wait a minute before retrying if there's an error
+            time.sleep(60)
