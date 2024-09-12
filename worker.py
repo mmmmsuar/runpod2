@@ -2,22 +2,11 @@ import lmdb
 import os
 import shutil
 import multiprocessing
-import requests
-import time
+from bitcoin import privtopub, pubtoaddr
 
-# Function to get key range assignment from the supervisor
-def get_range_assignment():
-    while True:
-        try:
-            response = requests.get(SUPERVISOR_ENDPOINT)
-            if response.status_code == 200:
-                range_data = response.json()
-                return range_data['start_range'], range_data['end_range']
-            else:
-                print(f"Error: Failed to fetch range assignment, retrying in 10 seconds")
-        except Exception as e:
-            print(f"Error: {e}, retrying in 10 seconds")
-        time.sleep(10)
+# Load environment variables
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+SCRIPT_URL = os.getenv('SCRIPT_URL')
 
 # Function to generate keys and addresses for a specific range
 def generate_key_range(start_range, end_range, db_path, local_save_path, size_threshold_mb):
@@ -84,12 +73,12 @@ def multiprocess_generate_keys(start_range, end_range, num_processes, db_path, l
         process.join()
 
 if __name__ == "__main__":
-    # Get range assignment from the supervisor
-    start_range, end_range = get_range_assignment()
-
-    db_path = "/path/to/lmdb/database"
-    local_save_path = "/local/directory"
-
+    # Receive the range, database path, etc., from the environment variables passed from the supervisor
+    start_range = int(os.getenv('START_RANGE'), 16)
+    end_range = int(os.getenv('END_RANGE'), 16)
+    db_path = os.getenv('DB_PATH', "/tmp/lmdb_database")
+    local_save_path = os.getenv('LOCAL_SAVE_PATH', "/tmp/local_save")
+    
     # Use multiprocessing across CPU cores
     num_processes = multiprocessing.cpu_count()  # Use all available CPU cores
     multiprocess_generate_keys(start_range, end_range, num_processes, db_path, local_save_path)
