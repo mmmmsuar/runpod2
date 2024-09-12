@@ -32,17 +32,17 @@ def send_discord_alert(message):
 # Function to assign key ranges to workers
 def assign_key_range(worker_id):
     # Assign ranges based on worker_id. Adjust the ranges as necessary.
-    if worker_id == "6trkpi9vzk6sg0":  # Worker 1
+    if worker_id == "v4u5uew9hcix6u":  # Worker 1
         return 0x2000000000000000, 0x209b800000000000
-    elif worker_id == "v4u5uew9hcix6u":  # Worker 2
+    elif worker_id == "hy8y0x8icq1jo2":  # Worker 2
         return 0x209b800000000001, 0x2137000000000000
-    elif worker_id == "hy8y0x8ic1j0z":  # Worker 3
+    elif worker_id == "rbusy21pgltamx":  # Worker 3
         return 0x2137000000000001, 0x21d2000000000000
-    elif worker_id == "rbusy21pgltamx":  # Worker 4
+    elif worker_id == "7kx98cbk895yar":  # Worker 4
         return 0x21d2000000000001, 0x2236e00000000000
-    elif worker_id == "7kx98cbk895yar":  # Worker 5
+    elif worker_id == "n1eoc1tzc1cd1u":  # Worker 5
         return 0x2236e00000000001, 0x22d1c80000000000
-    elif worker_id == "n1eoc1tzc1cd1u":  # Worker 6
+    elif worker_id == "zrowu8zyj9nyp3":  # Worker 6
         return 0x22d1c80000000001, 0x236cb00000000000
     # Add more workers as needed
 
